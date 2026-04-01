@@ -11,7 +11,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt import create_react_agent as _create_react_agent
+create_react_agent = _create_react_agent
 from tavily import TavilyClient
 import wikipedia
 import arxiv
