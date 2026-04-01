@@ -1,8 +1,5 @@
 """
-agent.py
-LangChain agent that:
-  1. Tries RAG (FAISS) if a retriever is available.
-  2. If RAG fails or no PDF uploaded, agent picks from Wikipedia, Tavily, ArXiv.
+agent.py - compatible with langchain 0.2.x on any Python version
 """
 
 from __future__ import annotations
@@ -12,20 +9,19 @@ import re
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.tools import Tool
+from langchain.agents import create_react_agent, AgentExecutor
 from langchain_community.tools import WikipediaQueryRun, ArxivQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper, ArxivAPIWrapper
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.tools import Tool
-from langchain.agents import create_react_agent, AgentExecutor
 
 from rag_engine import query_rag
-
 
 # ── OpenRouter config ─────────────────────────────────────────────────────────
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 MODEL_NAME      = "openai/gpt-4o"
 
-# ── ReAct prompt (no hub dependency) ─────────────────────────────────────────
+# ── ReAct prompt ──────────────────────────────────────────────────────────────
 REACT_PROMPT = PromptTemplate.from_template(
     "Answer the following question as best you can.\n"
     "You have access to the following tools:\n\n"
@@ -73,7 +69,7 @@ def _build_tools(tavily_key: str) -> list:
         func=lambda q: str(TavilySearchResults(max_results=3).invoke(q)),
         description=(
             "Useful for current events, recent news, or up-to-date web information. "
-            "Also used as a fallback when other tools fail."
+            "Use as fallback when other tools are insufficient."
         ),
     )
 
