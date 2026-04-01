@@ -2,25 +2,21 @@
 agent.py
 LangChain agent that:
   1. Tries RAG (FAISS) if a retriever is available.
-  2. If RAG fails or no PDF uploaded → LangChain agent picks from
-     Wikipedia, Tavily, ArXiv.
-  3. Tavily is used as the fallback when the agent needs current web info.
+  2. If RAG fails or no PDF uploaded, agent picks from Wikipedia, Tavily, ArXiv.
 """
 
 from __future__ import annotations
 import os
 import re
-from typing import Optional
 
 from langchain_openai import ChatOpenAI
-from langchain.agents import create_react_agent
-from langchain.agents.agent import AgentExecutor
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.tools import WikipediaQueryRun, ArxivQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper, ArxivAPIWrapper
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.tools import Tool
+from langchain.agents import create_react_agent, AgentExecutor
 
 from rag_engine import query_rag
 
@@ -30,26 +26,23 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 MODEL_NAME      = "openai/gpt-4o"
 
 # ── ReAct prompt (no hub dependency) ─────────────────────────────────────────
-REACT_PROMPT = PromptTemplate.from_template("""Answer the following question as best you can.
-You have access to the following tools:
-
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question. Always mention which tool you used.
-
-Begin!
-
-Question: {input}
-Thought:{agent_scratchpad}""")
+REACT_PROMPT = PromptTemplate.from_template(
+    "Answer the following question as best you can.\n"
+    "You have access to the following tools:\n\n"
+    "{tools}\n\n"
+    "Use the following format:\n\n"
+    "Question: the input question you must answer\n"
+    "Thought: you should always think about what to do\n"
+    "Action: the action to take, should be one of [{tool_names}]\n"
+    "Action Input: the input to the action\n"
+    "Observation: the result of the action\n"
+    "... (this Thought/Action/Action Input/Observation can repeat N times)\n"
+    "Thought: I now know the final answer\n"
+    "Final Answer: the final answer. Always mention which tool you used.\n\n"
+    "Begin!\n\n"
+    "Question: {input}\n"
+    "Thought:{agent_scratchpad}"
+)
 
 
 def _build_llm(openrouter_key: str) -> ChatOpenAI:
@@ -64,40 +57,34 @@ def _build_llm(openrouter_key: str) -> ChatOpenAI:
 def _build_tools(tavily_key: str) -> list:
     os.environ["TAVILY_API_KEY"] = tavily_key
 
-    # Wikipedia
-    wiki = WikipediaQueryRun(
-        api_wrapper=WikipediaAPIWrapper(top_k_results=2, doc_content_chars_max=3000)
-    )
     wiki_tool = Tool(
         name="Wikipedia",
-        func=wiki.run,
+        func=WikipediaQueryRun(
+            api_wrapper=WikipediaAPIWrapper(top_k_results=2, doc_content_chars_max=3000)
+        ).run,
         description=(
-            "Useful for encyclopedic or background knowledge questions. "
+            "Useful for encyclopedic or background knowledge. "
             "Use for factual, well-established topics."
         ),
     )
 
-    # Tavily
-    tavily_search = TavilySearchResults(max_results=3)
     tavily_tool = Tool(
         name="Tavily",
-        func=lambda q: str(tavily_search.invoke(q)),
+        func=lambda q: str(TavilySearchResults(max_results=3).invoke(q)),
         description=(
-            "Useful for current events, recent news, or any question requiring "
-            "up-to-date web information. Also used as a fallback when other tools fail."
+            "Useful for current events, recent news, or up-to-date web information. "
+            "Also used as a fallback when other tools fail."
         ),
     )
 
-    # ArXiv
-    arxiv = ArxivQueryRun(
-        api_wrapper=ArxivAPIWrapper(top_k_results=2, doc_content_chars_max=3000)
-    )
     arxiv_tool = Tool(
         name="ArXiv",
-        func=arxiv.run,
+        func=ArxivQueryRun(
+            api_wrapper=ArxivAPIWrapper(top_k_results=2, doc_content_chars_max=3000)
+        ).run,
         description=(
-            "Useful for academic research, scientific papers, machine learning, "
-            "physics, math, or any research-oriented question."
+            "Useful for academic research, scientific papers, ML, "
+            "physics, math, or research-oriented questions."
         ),
     )
 
@@ -106,17 +93,16 @@ def _build_tools(tavily_key: str) -> list:
 
 def _rag_answer(context: str, query: str, llm) -> str:
     prompt = PromptTemplate.from_template(
-        "You are a helpful assistant. Use ONLY the following context to answer the question.\n"
-        "If the context does not contain enough information, respond with: NOT_FOUND\n\n"
+        "You are a helpful assistant. Use ONLY the context below to answer.\n"
+        "If the context is insufficient, respond with exactly: NOT_FOUND\n\n"
         "Context:\n{context}\n\n"
-        "Question: {question}\n\n"
-        "Answer:"
+        "Question: {question}\n\nAnswer:"
     )
     chain = prompt | llm | StrOutputParser()
     return chain.invoke({"context": context, "question": query})
 
 
-def _extract_urls(text: str) -> list[str]:
+def _extract_urls(text: str) -> list:
     return re.findall(r'https?://[^\s\'"<>\]]+', text)
 
 
@@ -153,7 +139,6 @@ def run_agent(
     answer = result.get("output", "No answer found.")
     steps  = result.get("intermediate_steps", [])
 
-    # Detect which tool was used
     source = "agent"
     urls   = []
     if steps:
