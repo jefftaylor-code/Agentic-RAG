@@ -3,16 +3,14 @@ import os
 import shutil
 import tempfile
 
-from langchain_openai import ChatOpenAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langgraph.prebuilt import create_react_agent as _create_react_agent
-create_react_agent = _create_react_agent
+from langgraph.prebuilt import create_react_agent
 from tavily import TavilyClient
 import wikipedia
 import arxiv
@@ -58,7 +56,6 @@ h2, h3 { font-family: 'Space Mono', monospace; }
 """, unsafe_allow_html=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 MODEL_NAME      = "openai/gpt-4o"
 
@@ -72,7 +69,7 @@ arxiv_search for research topics, and only use tavily_search when real-time info
 
 # ── Session state ─────────────────────────────────────────────────────────────
 if "source_info" not in st.session_state:
-    st.session_state.source_info = {"source": None, "urls": [], "fallback_from": None}
+    st.session_state.source_info = {"source": None, "urls": []}
 
 # ── Title ─────────────────────────────────────────────────────────────────────
 st.title("🔍 Agentic RAG")
@@ -97,11 +94,9 @@ with st.sidebar:
     with st.expander("API Keys", expanded=False):
         st.markdown('<p style="font-size:0.78rem;color:#64748b;">Keys are read from st.secrets first. Enter here to override.</p>', unsafe_allow_html=True)
         openrouter_input = st.text_input("OpenRouter API Key", value=st.session_state.get("openrouter_key", ""), type="password", placeholder="sk-or-...")
-        hf_input         = st.text_input("HuggingFace API Key", value=st.session_state.get("hf_key", ""),         type="password", placeholder="hf_...")
-        tavily_input     = st.text_input("Tavily API Key",       value=st.session_state.get("tavily_key", ""),     type="password", placeholder="tvly-...")
+        tavily_input     = st.text_input("Tavily API Key",     value=st.session_state.get("tavily_key", ""),     type="password", placeholder="tvly-...")
         if st.button("Save Keys"):
             st.session_state["openrouter_key"] = openrouter_input
-            st.session_state["hf_key"]         = hf_input
             st.session_state["tavily_key"]     = tavily_input
             st.success("Keys saved.")
     st.markdown("---")
@@ -110,7 +105,6 @@ with st.sidebar:
 
 # ── Resolve keys ──────────────────────────────────────────────────────────────
 openrouter_key = get_secret("OPENROUTER_API_KEY", "openrouter_key")
-hf_key         = get_secret("HF_API_KEY",         "hf_key")
 tavily_key     = get_secret("TAVILY_API_KEY",      "tavily_key")
 
 missing = []
@@ -120,13 +114,22 @@ if missing:
     st.warning(f"Missing keys: {', '.join(missing)}. Add them in ⚙️ Settings.")
     st.stop()
 
-os.environ["OPENAI_API_KEY"] = openrouter_key
-os.environ["TAVILY_API_KEY"] = tavily_key
-if hf_key:
-    os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_key
+os.environ["OPENAI_API_KEY"]  = openrouter_key
+os.environ["TAVILY_API_KEY"]  = tavily_key
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
-llm = ChatOpenAI(model=MODEL_NAME, temperature=0, openai_api_base=OPENROUTER_BASE, openai_api_key=openrouter_key)
+# ── LLM + Embeddings ──────────────────────────────────────────────────────────
+llm = ChatOpenAI(
+    model=MODEL_NAME,
+    temperature=0,
+    openai_api_base=OPENROUTER_BASE,
+    openai_api_key=openrouter_key,
+)
+
+embeddings = OpenAIEmbeddings(
+    model="text-embedding-ada-002",
+    openai_api_key=openrouter_key,
+    openai_api_base=OPENROUTER_BASE,
+)
 
 # ── Tavily client ─────────────────────────────────────────────────────────────
 tavily_client = TavilyClient(api_key=tavily_key)
@@ -134,7 +137,7 @@ tavily_client = TavilyClient(api_key=tavily_key)
 # ── Tools ─────────────────────────────────────────────────────────────────────
 @tool
 def tavily_search(query: str) -> str:
-    """Search the web for current events, news, weather, or real-time information not covered by Wikipedia or ArXiv."""
+    """Search the web for current events, news, weather, or real-time information."""
     try:
         response = tavily_client.search(query)
         results  = response.get("results", [])
@@ -144,33 +147,33 @@ def tavily_search(query: str) -> str:
         for i, r in enumerate(results[:5], 1):
             formatted.append(f"{i}. {r.get('title','')}\n{r.get('content','')}\n")
             urls.append(r.get("url", ""))
-        st.session_state.source_info = {"source": "Web Search (Tavily)", "urls": urls, "fallback_from": None}
+        st.session_state.source_info = {"source": "Tavily", "urls": urls}
         return "\n".join(formatted)
     except Exception as e:
         return f"ERROR: {e}"
 
 @tool
 def wikipedia_search(query: str) -> str:
-    """Search Wikipedia for encyclopedic information: people, places, history, science concepts, or any well-established topic."""
+    """Search Wikipedia for encyclopedic information: people, places, history, science concepts."""
     try:
         wikipedia.set_lang("en")
-        search_results = wikipedia.search(query, results=3)
-        if not search_results:
-            search_results = wikipedia.search(" ".join(query.split()[:3]), results=3)
-        if not search_results:
+        results = wikipedia.search(query, results=3)
+        if not results:
+            results = wikipedia.search(" ".join(query.split()[:3]), results=3)
+        if not results:
             return "NO_RESULTS: No Wikipedia articles found."
-        for name in search_results:
+        for name in results:
             try:
                 page    = wikipedia.page(name)
                 summary = wikipedia.summary(name, sentences=4)
-                st.session_state.source_info = {"source": "Wikipedia", "urls": [page.url], "fallback_from": None}
+                st.session_state.source_info = {"source": "Wikipedia", "urls": [page.url]}
                 return f"Wikipedia: {page.title}\n\n{summary}\n\nSource: {page.url}"
             except wikipedia.exceptions.DisambiguationError as e:
                 if e.options:
                     try:
                         page    = wikipedia.page(e.options[0])
                         summary = wikipedia.summary(e.options[0], sentences=4)
-                        st.session_state.source_info = {"source": "Wikipedia", "urls": [page.url], "fallback_from": None}
+                        st.session_state.source_info = {"source": "Wikipedia", "urls": [page.url]}
                         return f"Wikipedia: {page.title}\n\n{summary}\n\nSource: {page.url}"
                     except Exception:
                         continue
@@ -182,7 +185,7 @@ def wikipedia_search(query: str) -> str:
 
 @tool
 def arxiv_search(query: str) -> str:
-    """Search ArXiv for academic papers and technical research in ML, AI, physics, math, or engineering."""
+    """Search ArXiv for academic papers in ML, AI, physics, math, or engineering."""
     try:
         client       = arxiv.Client()
         search       = arxiv.Search(query=query, max_results=5, sort_by=arxiv.SortCriterion.Relevance)
@@ -202,7 +205,7 @@ def arxiv_search(query: str) -> str:
                 f"Abstract: {r.summary[:300]}...\n"
             )
             urls.append(r.entry_id)
-        st.session_state.source_info = {"source": "ArXiv", "urls": urls, "fallback_from": None}
+        st.session_state.source_info = {"source": "ArXiv", "urls": urls}
         return "\n".join(formatted)
     except Exception as e:
         return f"ERROR: {e}"
@@ -212,7 +215,7 @@ agent = create_react_agent(llm, [tavily_search, wikipedia_search, arxiv_search])
 
 # ── PDF Upload ────────────────────────────────────────────────────────────────
 st.markdown("### 📄 Document Upload *(optional)*")
-uploaded_file = st.file_uploader("Upload a PDF to enable RAG retrieval", type=["pdf"], label_visibility="collapsed")
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], label_visibility="collapsed")
 
 retriever = None
 if uploaded_file:
@@ -227,13 +230,7 @@ if uploaded_file:
                 docs     = loader.load()
                 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                 texts    = splitter.split_documents(docs)
-                from langchain_openai import OpenAIEmbeddings
-		emb = OpenAIEmbeddings(
-    			model="text-embedding-ada-002",
-    			openai_api_key=openrouter_key,
-    			openai_api_base=OPENROUTER_BASE
-		)
-                db       = FAISS.from_documents(texts, emb)
+                db       = FAISS.from_documents(texts, embeddings)
                 retriever = db.as_retriever(search_kwargs={"k": 5})
                 st.session_state["retriever"]     = retriever
                 st.session_state["last_uploaded"] = uploaded_file.name
