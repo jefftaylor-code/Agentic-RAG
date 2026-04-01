@@ -9,11 +9,6 @@ from typing import Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-```
-
-Then add the package to `requirements.txt`:
-```
-langchain-text-splitters>=0.2.0
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
