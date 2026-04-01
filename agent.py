@@ -13,7 +13,8 @@ import re
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain.agents import create_react_agent
+from langchain.agents.agent import AgentExecutor
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.tools import WikipediaQueryRun, ArxivQueryRun
