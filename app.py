@@ -226,7 +226,12 @@ if uploaded_file:
                 docs     = loader.load()
                 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                 texts    = splitter.split_documents(docs)
-                emb      = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL, model_kwargs={"device": "cpu"})
+                from langchain_openai import OpenAIEmbeddings
+		emb = OpenAIEmbeddings(
+    			model="text-embedding-ada-002",
+    			openai_api_key=openrouter_key,
+    			openai_api_base=OPENROUTER_BASE
+		)
                 db       = FAISS.from_documents(texts, emb)
                 retriever = db.as_retriever(search_kwargs={"k": 5})
                 st.session_state["retriever"]     = retriever
